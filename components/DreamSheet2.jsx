@@ -1,13 +1,11 @@
-import React, { useRef, useEffect, useContext } from 'react';
-import { AuthContext } from '../context/AuthContext';
+import React, { useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, Image, Animated, PanResponder, Dimensions, TouchableOpacity, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useDreamStore } from '../store/useDreamStore'; 
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../firebaseConfig'; // 確保您有正確的 Firebase 初始化
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// ✨ 確保 moodMap 完整
 const moodMap = {
   '非常差': require('../img/very-bad.png'),
   '差': require('../img/bad.png'),
@@ -16,11 +14,14 @@ const moodMap = {
   '非常好': require('../img/very-good.png'),
 };
 
-const DreamSheet2 = ({ selectedDate }) => {
+const DreamSheet2 = ({ selectedDate, expandedRatio = 0.51 }) => {
   const router = useRouter();
   const dreams = useDreamStore((state) => state.dreams);
   const deleteDream = useDreamStore((state) => state.deleteDream); 
   
+  const EXPANDED_HEIGHT = -SCREEN_HEIGHT * expandedRatio;
+
+  // ✨ 精確抓取當前夢境資料
   let currentDream = null;
   if (Array.isArray(dreams)) {
     currentDream = dreams.find(d => d.date === selectedDate);
@@ -31,7 +32,6 @@ const DreamSheet2 = ({ selectedDate }) => {
   const lastOffset = useRef(0);
   const dragY = useRef(new Animated.Value(0)).current;
 
-  // 切換日期時重置位置到最底部 (0)
   useEffect(() => {
     Animated.spring(dragY, { toValue: 0, friction: 8, useNativeDriver: false }).start();
     lastOffset.current = 0;
@@ -53,53 +53,10 @@ const DreamSheet2 = ({ selectedDate }) => {
     ]);
   };
 
-  const handleShare = async () => {
-  if (!currentDream) {
-    Alert.alert("提示", "目前沒有夢境資料可分享。");
-    return;
-  }
-
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    Alert.alert("錯誤", "請先登入帳號");
-    return;
-  }
-
-  Alert.alert("分享夢境", "確定要公開分享至社群嗎？", [
-    { text: "取消", style: "cancel" },
-    { 
-      text: "確定", 
-      onPress: async () => {
-        try {
-          await addDoc(collection(db, "posts"), {
-            userId: currentUser.uid, // 確保寫入 ID
-            username: currentUser.displayName || "匿名",
-            userAvatar: currentUser.photoURL || null,
-            content: currentDream.content || "無內容",
-            mood: currentDream.mood || "普通",
-            tags: currentDream.tags || [],
-            createdAt: serverTimestamp(),
-            likes: [],
-            comments: []
-          });
-          
-          Alert.alert("成功", "已發布至社群！");
-          // 成功後跳轉，Firestore 的 onSnapshot 會自動觸發更新
-          router.push('/social');
-        } catch (error) {
-          Alert.alert("分享失敗", error.message);
-        }
-      } 
-    }
-  ]);
-};
-
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dy) > 10;
-      },
+      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 10,
       onPanResponderGrant: () => {
         dragY.setOffset(lastOffset.current);
         dragY.setValue(0);
@@ -107,13 +64,7 @@ const DreamSheet2 = ({ selectedDate }) => {
       onPanResponderMove: Animated.event([null, { dy: dragY }], { useNativeDriver: false }),
       onPanResponderRelease: (_, gestureState) => {
         dragY.flattenOffset();
-        
-        // --- 修改處：將拉上去的目標高度調低 (原本是 -SCREEN_HEIGHT * 0.5) ---
-        const expandedHeight = -SCREEN_HEIGHT * 0.35; 
-        
-        // 判定回彈：如果手勢移動超過設定的高度範圍，則彈至展開狀態，否則收回
-        const destination = gestureState.moveY < SCREEN_HEIGHT * 0.7 ? expandedHeight : 0;
-        
+        const destination = gestureState.moveY < SCREEN_HEIGHT * 0.75 ? EXPANDED_HEIGHT : 0;
         Animated.spring(dragY, { toValue: destination, friction: 8, tension: 40, useNativeDriver: false }).start();
         lastOffset.current = destination;
       },
@@ -138,22 +89,14 @@ const DreamSheet2 = ({ selectedDate }) => {
         <View style={styles.sheetHeader}>
           <Text style={styles.noDataText} numberOfLines={1}>{currentDream?.summary || "暫無資料"}</Text>
           <View style={styles.headerButtons}>
-
-            <TouchableOpacity onPress={() => currentDream ? router.push({ pathname: '/edit', params: { ...currentDream, tags: Array.isArray(currentDream.tags) ? currentDream.tags.join(',') : currentDream.tags } }) : router.push(`/select-mode?date=${selectedDate}`)}>
-              <Image source={require('../img/edit.png')} style={styles.editImage} />
-            </TouchableOpacity>
-            
             {currentDream && (
               <TouchableOpacity onPress={handleDelete} style={styles.iconButton}>
                 <Image source={require('../img/delete.png')} style={styles.deleteImage} />
               </TouchableOpacity>
             )}
-
-            {currentDream && (
-            <TouchableOpacity style={styles.iconButton}>
-                <Image source={require('../img/share.png')} style={styles.shareImage} />
-              </TouchableOpacity>
-            )}  
+            <TouchableOpacity onPress={() => currentDream ? router.push({ pathname: '/edit', params: { ...currentDream, tags: Array.isArray(currentDream.tags) ? currentDream.tags.join(',') : currentDream.tags } }) : router.push(`/select-mode?date=${selectedDate}`)}>
+              <Image source={require('../img/edit.png')} style={styles.editImage} />
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -235,9 +178,8 @@ const styles = StyleSheet.create({
   sheetContent: { paddingHorizontal: 30, paddingBottom: SCREEN_HEIGHT * 0.6 },
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   headerButtons: { flexDirection: 'row', alignItems: 'center' },
-  deleteImage: { width: 30, height: 30, marginLeft: 15 },
+  deleteImage: { width: 30, height: 30, marginRight: 15 },
   editImage: { width: 28, height: 28 },
-  shareImage: { width: 30, height: 30,marginLeft: 17 },
   noDataText: { fontSize: 24, flex: 1, fontWeight: 'bold', color: '#252736' },
   dateInfo: { color: '#999', fontSize: 14, marginBottom: 10},
   dreamDataContainer: { marginTop: 10 },
